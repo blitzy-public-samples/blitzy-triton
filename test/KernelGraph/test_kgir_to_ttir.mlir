@@ -8,16 +8,21 @@
 // eliminating the global memory round-trip between the two kernels.
 // =============================================================================
 
-// The stub conversion pass performs no transformations; verify that the
-// original kernel functions and KGIR graph structure pass through unchanged.
-// When the pass is fully implemented, this test will verify that a merged
-// tt.func @fused_matmul_relu is produced and ttkgir.graph is removed.
+// Verify that the conversion pass creates a merged TTIR function for the
+// producer-consumer fused kernel, preserves the original kernel functions,
+// and removes the ttkgir.graph container operation.
 // CHECK-LABEL: test_pc_fusion_to_ttir
 // CHECK:       tt.func @matmul_kernel
 // CHECK:       arith.mulf
 // CHECK:       tt.func @relu_kernel
 // CHECK:       arith.maximumf
-// CHECK:       "ttkgir.graph"
+// CHECK:       tt.func @fused_matmul_relu
+// CHECK-SAME:  kgir.fusion_type = "producer_consumer"
+// CHECK-SAME:  kgir.grid = array<i32: 128, 1, 1>
+// CHECK:       arith.mulf
+// CHECK:       arith.maximumf
+// CHECK:       tt.return
+// CHECK-NOT:   "ttkgir.graph"
 
 module @test_pc_fusion_to_ttir {
   tt.func @matmul_kernel(%arg0: tensor<128xf32>, %arg1: tensor<128xf32>) -> tensor<128xf32> {
@@ -49,14 +54,21 @@ module @test_pc_fusion_to_ttir {
 // partition compute across SM groups using tt.get_program_id.
 // =============================================================================
 
-// The stub conversion pass performs no transformations; verify pass-through.
-// When fully implemented, this will verify a merged tt.func with SM partitioning.
+// Verify that sibling fusion produces a merged TTIR function with SM
+// partitioning attributes and removes the ttkgir.graph operation.
 // CHECK-LABEL: test_sibling_fusion_to_ttir
 // CHECK:       tt.func @scale_kernel
 // CHECK:       arith.mulf
 // CHECK:       tt.func @bias_kernel
 // CHECK:       arith.addf
-// CHECK:       "ttkgir.graph"
+// CHECK:       tt.func @fused_elementwise_pair
+// CHECK-SAME:  kgir.fusion_type = "sibling"
+// CHECK-SAME:  kgir.grid = array<i32: 512, 1, 1>
+// CHECK-SAME:  kgir.partition_boundaries = array<i32: 0, 256>
+// CHECK:       arith.mulf
+// CHECK:       arith.addf
+// CHECK:       tt.return
+// CHECK-NOT:   "ttkgir.graph"
 
 module @test_sibling_fusion_to_ttir {
   tt.func @scale_kernel(%arg0: tensor<256xf32>, %arg1: tensor<256xf32>) -> tensor<256xf32> {
@@ -87,14 +99,20 @@ module @test_sibling_fusion_to_ttir {
 // (128, 2, 1) from the fused_kernel specification.
 // =============================================================================
 
-// The stub conversion pass performs no transformations; verify pass-through.
-// When fully implemented, this will verify unified grid dimensions in merged func.
+// Verify that the fused function carries the unified combined grid dimensions
+// from the fused_kernel metadata and removes the ttkgir.graph operation.
 // CHECK-LABEL: test_unified_grid_computation
 // CHECK:       tt.func @add_kernel
 // CHECK:       arith.addf
 // CHECK:       tt.func @mul_kernel
 // CHECK:       arith.mulf
-// CHECK:       "ttkgir.graph"
+// CHECK:       tt.func @fused_chain_kernels
+// CHECK-SAME:  kgir.fusion_type = "producer_consumer"
+// CHECK-SAME:  kgir.grid = array<i32: 128, 2, 1>
+// CHECK:       arith.addf
+// CHECK:       arith.mulf
+// CHECK:       tt.return
+// CHECK-NOT:   "ttkgir.graph"
 
 module @test_unified_grid_computation {
   tt.func @add_kernel(%arg0: tensor<64xf32>, %arg1: tensor<64xf32>) -> tensor<64xf32> {
@@ -125,14 +143,20 @@ module @test_unified_grid_computation {
 // access pattern annotations are also present on kernel launches.
 // =============================================================================
 
-// The stub conversion pass performs no transformations; verify pass-through.
-// When fully implemented, this will verify per-target TTIR with hw annotations.
+// Verify that per-target hardware annotations are handled during conversion,
+// and the fused function is correctly emitted with merged body.
 // CHECK-LABEL: test_per_target_emission
 // CHECK:       tt.func @compute_kernel
 // CHECK:       arith.addf
 // CHECK:       tt.func @postprocess_kernel
 // CHECK:       arith.mulf
-// CHECK:       "ttkgir.graph"
+// CHECK:       tt.func @fused_target_specific
+// CHECK-SAME:  kgir.combined_shared_memory_bytes = 49152
+// CHECK-SAME:  kgir.fusion_type = "producer_consumer"
+// CHECK:       arith.addf
+// CHECK:       arith.mulf
+// CHECK:       tt.return
+// CHECK-NOT:   "ttkgir.graph"
 
 module @test_per_target_emission {
   tt.func @compute_kernel(%arg0: tensor<128xf32>, %arg1: tensor<128xf32>) -> tensor<128xf32> {
@@ -164,9 +188,8 @@ module @test_per_target_emission {
 // decision has been made for them.
 // =============================================================================
 
-// The stub conversion pass performs no transformations; verify pass-through
-// of non-fused kernels. When fully implemented, this will verify 1:1 mapping
-// of unfused kernel_launch ops to individual TTIR functions with no KGIR.
+// Verify that unfused kernel launches result in preserved original TTIR
+// functions (1:1 mapping) and the ttkgir.graph operation is removed.
 // CHECK-LABEL: test_passthrough_nonfused
 // CHECK:       tt.func @standalone_add
 // CHECK:       arith.addf
@@ -174,7 +197,7 @@ module @test_per_target_emission {
 // CHECK:       tt.func @standalone_mul
 // CHECK:       arith.mulf
 // CHECK:       tt.return
-// CHECK:       "ttkgir.graph"
+// CHECK-NOT:   "ttkgir.graph"
 
 module @test_passthrough_nonfused {
   tt.func @standalone_add(%arg0: tensor<64xf32>, %arg1: tensor<64xf32>) -> tensor<64xf32> {
@@ -205,15 +228,20 @@ module @test_passthrough_nonfused {
 // memory_access_patterns metadata on KGIR operations.
 // =============================================================================
 
-// The stub conversion pass performs no transformations; verify pass-through.
-// When fully implemented, this will verify that data dependencies are
-// preserved in the merged TTIR function with correct data flow semantics.
+// Verify that data dependencies are preserved in the merged TTIR function.
+// The sum_kernel (producer) body feeds into diff_kernel (consumer) body.
 // CHECK-LABEL: test_data_dep_preservation
 // CHECK:       tt.func @sum_kernel
 // CHECK:       arith.addf
 // CHECK:       tt.func @diff_kernel
 // CHECK:       arith.subf
-// CHECK:       "ttkgir.graph"
+// CHECK:       tt.func @fused_dep_chain
+// CHECK-SAME:  kgir.fusion_type = "producer_consumer"
+// CHECK-SAME:  kgir.grid = array<i32: 256, 1, 1>
+// CHECK:       arith.addf
+// CHECK:       arith.subf
+// CHECK:       tt.return
+// CHECK-NOT:   "ttkgir.graph"
 
 module @test_data_dep_preservation {
   tt.func @sum_kernel(%arg0: tensor<256xf32>, %arg1: tensor<256xf32>) -> tensor<256xf32> {
