@@ -550,6 +550,25 @@ class proton_knobs(base_knobs):
     enable_hw_trace: env_bool = env_bool("TRITON_ENABLE_HW_TRACE", False)
 
 
+class graph_knobs(base_knobs):
+    """Configuration controlling the graph-level cross-kernel optimization layer"""
+    kgir_dump: env_bool = env_bool("TRITON_KGIR_DUMP")
+    fusion_log: env_bool = env_bool("TRITON_FUSION_LOG")
+    fusion_disable: env_bool = env_bool("TRITON_FUSION_DISABLE")
+    fusion_threshold: env_str = env_str("TRITON_FUSION_THRESHOLD", "0.10")
+    feedback_enable: env_bool = env_bool("TRITON_FEEDBACK_ENABLE", True)
+    feedback_sensitivity: env_str = env_str("TRITON_FEEDBACK_SENSITIVITY", "0.15")
+    feedback_max_iters: env_int = env_int("TRITON_FEEDBACK_MAX_ITERS", 20)
+    feedback_log: env_bool = env_bool("TRITON_FEEDBACK_LOG")
+    feedback_history_dump: env_opt_str = env_opt_str("TRITON_FEEDBACK_HISTORY_DUMP")
+    dispatch_mode: env_str = env_str("TRITON_DISPATCH_MODE", "balanced")
+    dispatch_log: env_bool = env_bool("TRITON_DISPATCH_LOG")
+    dispatch_targets: env_opt_str = env_opt_str("TRITON_DISPATCH_TARGETS")
+    dispatch_cost_weights: env_opt_str = env_opt_str("TRITON_DISPATCH_COST_WEIGHTS")
+    dispatch_latency_constraint: env_opt_str = env_opt_str("TRITON_DISPATCH_LATENCY_CONSTRAINT")
+    dispatch_granularity: env_str = env_str("TRITON_DISPATCH_GRANULARITY", "subgraph")
+
+
 build = build_knobs()
 redis = redis_knobs()
 cache = cache_knobs()
@@ -560,6 +579,7 @@ language = language_knobs()
 nvidia = nvidia_knobs()
 amd = amd_knobs()
 proton = proton_knobs()
+graph = graph_knobs()
 
 
 def refresh_knobs():
