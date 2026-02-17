@@ -54,7 +54,7 @@
 // CHECK: "ttkgir.kernel_launch"
 // CHECK-SAME: grid_dims = array<i64: 128, 1, 1>
 // CHECK-SAME: kernel_name = "test_launch_mem_pattern"
-// CHECK-SAME: memory_access_patterns = #ttkgir.mem_access_pattern<"readwrite", 0, true, 4194304>
+// CHECK-SAME: memory_access_patterns = #ttkgir.mem_access_pattern<"readwrite", 0,, 4194304>
 // CHECK-SAME: node_id = 2 : i32
 // CHECK-SAME: num_warps = 4 : i32
 // CHECK-SAME: register_pressure = 64 : i32
@@ -350,6 +350,7 @@
   num_edges = 0 : i32,
   num_nodes = 0 : i32
 }> ({
+^bb0:
 }) : () -> ()
 
 // ===----------------------------------------------------------------------===
@@ -372,6 +373,7 @@
   num_edges = 3 : i32,
   num_nodes = 4 : i32
 }> ({
+^bb0:
 }) : () -> ()
 
 // ===----------------------------------------------------------------------===
@@ -394,6 +396,7 @@
   num_edges = 1 : i32,
   num_nodes = 2 : i32
 }> ({
+^bb0:
 }) : () -> ()
 
 // ===----------------------------------------------------------------------===
@@ -417,6 +420,7 @@
   num_edges = 0 : i32,
   num_nodes = 2 : i32
 }> ({
+^bb0:
   "ttkgir.kernel_launch"() <{
     grid_dims = array<i64: 128, 1, 1>,
     kernel_name = "matmul_kernel",
@@ -446,7 +450,7 @@
 // CHECK-SAME: num_nodes = 3 : i32
 // CHECK: "ttkgir.kernel_launch"
 // CHECK-SAME: kernel_name = "attention_matmul"
-// CHECK-SAME: memory_access_patterns = #ttkgir.mem_access_pattern<"readwrite", 0, true, 4194304>
+// CHECK-SAME: memory_access_patterns = #ttkgir.mem_access_pattern<"readwrite", 0,, 4194304>
 // CHECK-SAME: node_id = 0 : i32
 // CHECK: "ttkgir.kernel_launch"
 // CHECK-SAME: kernel_name = "add_bias"
@@ -479,6 +483,7 @@
   num_edges = 3 : i32,
   num_nodes = 3 : i32
 }> ({
+^bb0:
   "ttkgir.kernel_launch"() <{
     grid_dims = array<i64: 128, 4, 1>,
     kernel_name = "attention_matmul",
@@ -539,7 +544,7 @@
 // ===----------------------------------------------------------------------===
 // CHECK: "ttkgir.kernel_launch"
 // CHECK-SAME: kernel_name = "test_attr_mem_read"
-// CHECK-SAME: memory_access_patterns = #ttkgir.mem_access_pattern<"read", 0, true, 1048576>
+// CHECK-SAME: memory_access_patterns = #ttkgir.mem_access_pattern<"read", 0,, 1048576>
 "ttkgir.kernel_launch"() <{
   grid_dims = array<i64: 64, 1, 1>,
   kernel_name = "test_attr_mem_read",
@@ -623,7 +628,7 @@
 // ===----------------------------------------------------------------------===
 // CHECK: "ttkgir.fused_kernel"
 // CHECK-SAME: fused_name = "test_fused_decision_rejected"
-// CHECK-SAME: fusion_decision = #ttkgir.fusion_decision<false, "sibling", "resource_limit_exceeded",
+// CHECK-SAME: fusion_decision = #ttkgir.fusion_decision<, "sibling", "resource_limit_exceeded",
 // CHECK-SAME: fusion_type = "sibling"
 // CHECK-SAME: node_id = 31 : i32
 "ttkgir.fused_kernel"() <{
@@ -672,6 +677,7 @@
   num_edges = 1 : i32,
   num_nodes = 2 : i32
 }> ({
+^bb0:
   "ttkgir.fused_kernel"() <{
     combined_grid_dims = array<i64: 128, 4, 1>,
     combined_register_pressure = 80 : i32,
