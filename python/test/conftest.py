@@ -4,6 +4,38 @@ import tempfile
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "interpreter: indicate whether interpreter supports the test")
+    config.addinivalue_line("markers", "kernel_graph: mark test as requiring the graph-level coordination layer")
+    config.addinivalue_line("markers", "multi_device: mark test as requiring multiple GPU devices (skip if <2 GPUs available)")
+    config.addinivalue_line("markers",
+                           "heterogeneous_hw: mark test as requiring heterogeneous GPU hardware (different vendors or generations)")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip graph-level tests based on hardware availability."""
+    # Detect GPU count and heterogeneity for gating
+    gpu_count = 0
+    gpu_targets = set()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            for i in range(gpu_count):
+                props = torch.cuda.get_device_properties(i)
+                gpu_targets.add((props.name, props.major, props.minor))
+    except ImportError:
+        pass
+
+    # Gate multi_device tests
+    skip_multi_device = pytest.mark.skip(reason="requires 2+ GPU devices")
+    for item in items:
+        if "multi_device" in item.keywords and gpu_count < 2:
+            item.add_marker(skip_multi_device)
+
+    # Gate heterogeneous_hw tests
+    skip_heterogeneous = pytest.mark.skip(reason="requires heterogeneous GPU hardware (different vendors/generations)")
+    for item in items:
+        if "heterogeneous_hw" in item.keywords and len(gpu_targets) < 2:
+            item.add_marker(skip_heterogeneous)
 
 
 def pytest_addoption(parser):
