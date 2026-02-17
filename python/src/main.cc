@@ -2,6 +2,8 @@
 #include "llvm/Support/Signals.h"
 #include <pybind11/pybind11.h>
 
+#include "triton/Dialect/TritonKGIR/IR/Dialect.h"
+
 namespace py = pybind11;
 
 #define FOR_EACH_1(MACRO, X) MACRO(X)
