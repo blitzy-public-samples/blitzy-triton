@@ -26,6 +26,7 @@ from .runtime._allocation import set_allocator
 from . import language
 from . import testing
 from . import tools
+from . import graph
 
 must_use_result = language.core.must_use_result
 
@@ -38,6 +39,7 @@ __all__ = [
     "Config",
     "constexpr_function",
     "FutureKernel",
+    "graph",
     "heuristics",
     "InterpreterError",
     "jit",
