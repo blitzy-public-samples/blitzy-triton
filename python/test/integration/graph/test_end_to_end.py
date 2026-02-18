@@ -30,6 +30,16 @@ from triton.graph.codegen_bridge import CodeGenerationBridge
 from triton.graph.errors import GraphCaptureError
 from triton.graph.config import FusionConfig, FeedbackConfig
 
+# Hardware availability flag — most tests in this module require an actual
+# CUDA GPU for tensor creation and kernel execution.  Tests that do not
+# require a GPU (e.g. test_empty_capture_scope, test_gpu_availability_detection)
+# are NOT decorated with ``requires_cuda``.
+_CUDA_AVAILABLE = torch.cuda.is_available() and torch.cuda.device_count() > 0
+requires_cuda = pytest.mark.skipif(
+    not _CUDA_AVAILABLE,
+    reason="Test requires CUDA GPU (torch.cuda not available)",
+)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Helper Kernel Definitions
@@ -164,6 +174,7 @@ def graph_config():
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_single_kernel_capture_and_execute(device, sample_tensors, graph_config):
     """Capture a single kernel, build KGIR, verify graph structure.
 
@@ -229,6 +240,7 @@ def test_single_kernel_capture_and_execute(device, sample_tensors, graph_config)
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_producer_consumer_capture(device, sample_tensors, graph_config):
     """Capture two kernels with data dependency, verify KGIR construction.
 
@@ -285,6 +297,7 @@ def test_producer_consumer_capture(device, sample_tensors, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_producer_consumer_fusion_e2e(device, sample_tensors, graph_config):
     """Full fusion pipeline: capture → fuse → verify fusion decision.
 
@@ -341,6 +354,7 @@ def test_producer_consumer_fusion_e2e(device, sample_tensors, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_sibling_fusion_e2e(device, graph_config):
     """Independent kernels fused via sibling fusion.
 
@@ -399,6 +413,7 @@ def test_sibling_fusion_e2e(device, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_mixed_fusion_scenario(device, sample_tensors, graph_config):
     """Mix of producer-consumer and independent kernels.
 
@@ -465,6 +480,7 @@ def test_mixed_fusion_scenario(device, sample_tensors, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_kgir_construction_metadata(device, sample_tensors, graph_config):
     """Verify KGIR nodes contain correct metadata fields.
 
@@ -559,6 +575,7 @@ def test_empty_capture_scope(device, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_capture_scope_restoration(device, sample_tensors, graph_config):
     """After capture scope exits, normal kernel launches work unmodified.
 
@@ -599,6 +616,7 @@ def test_capture_scope_restoration(device, sample_tensors, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_multiple_capture_scopes(device, sample_tensors, graph_config):
     """Multiple sequential capture scopes produce independent graphs.
 
@@ -639,6 +657,7 @@ def test_multiple_capture_scopes(device, sample_tensors, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_capture_error_cleanup(device, sample_tensors, graph_config):
     """Exception within capture scope cleans up monkey-patch correctly.
 
@@ -675,6 +694,7 @@ def test_capture_error_cleanup(device, sample_tensors, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_numerical_correctness_deterministic(device, sample_tensors, graph_config):
     """Bitwise identity for deterministic ops (add, mul) across capture.
 
@@ -739,6 +759,7 @@ def test_numerical_correctness_deterministic(device, sample_tensors, graph_confi
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_numerical_correctness_nondeterministic(device, graph_config):
     """IEEE 754 bounds for non-deterministic ops (softmax reduction).
 
@@ -799,6 +820,7 @@ def test_numerical_correctness_nondeterministic(device, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_capture_with_config(device, sample_tensors):
     """Capture with custom GraphConfig settings.
 
@@ -861,6 +883,7 @@ def test_capture_with_config(device, sample_tensors):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_capture_overhead_within_budget(device, graph_config):
     """Trace capture overhead must be < 5ms for graphs with ≤ 50 kernels.
 
@@ -911,6 +934,7 @@ def test_capture_overhead_within_budget(device, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_kgir_construction_overhead(device, graph_config):
     """KGIR construction and analysis must complete in < 100ms for ≤ 50 kernels.
 
@@ -953,6 +977,7 @@ def test_kgir_construction_overhead(device, graph_config):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 @pytest.mark.parametrize("n_elements", [1, 64, 1024, 8192, 65536])
 def test_capture_varying_tensor_sizes(device, graph_config, n_elements):
     """Capture and KGIR construction succeed for various tensor sizes.
@@ -980,6 +1005,7 @@ def test_capture_varying_tensor_sizes(device, graph_config, n_elements):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 @pytest.mark.parametrize("block_size", [64, 128, 256, 512, 1024])
 def test_capture_varying_block_sizes(device, graph_config, block_size):
     """Capture and KGIR construction succeed for various BLOCK_SIZE values.
@@ -1007,6 +1033,7 @@ def test_capture_varying_block_sizes(device, graph_config, block_size):
 
 
 @pytest.mark.kernel_graph
+@requires_cuda
 def test_codegen_bridge_construction(device, sample_tensors, graph_config):
     """Construct CodeGenerationBridge from a captured graph.
 
