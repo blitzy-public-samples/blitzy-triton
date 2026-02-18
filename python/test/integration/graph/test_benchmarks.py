@@ -43,6 +43,12 @@ from triton.graph.dispatch import HardwareInventory, DispatchDecisionEngine
 from triton.graph.profiler import RuntimeProfiler
 from triton.graph.feedback import FeedbackController
 
+# All benchmark tests require actual GPU execution (tensor creation on
+# device, kernel launch, profiling).  Skip the entire module when CUDA
+# is not available so CPU-only CI environments don't report false failures.
+_CUDA_AVAILABLE = torch.cuda.is_available() and torch.cuda.device_count() > 0
+pytestmark = pytest.mark.skipif(not _CUDA_AVAILABLE, reason="Benchmarks require CUDA GPU")
+
 
 # ============================================================================
 # Phase 1: Benchmark Infrastructure — Timing Helpers

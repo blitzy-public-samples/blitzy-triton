@@ -94,7 +94,13 @@ class _GPUEvent:
         if backend in ("cuda", "hip") and self._ensure_torch():
             torch_mod = self.__class__._torch_module
             # ``enable_timing=True`` is required for ``elapsed_time``.
-            self._native_event = torch_mod.cuda.Event(enable_timing=True)
+            try:
+                self._native_event = torch_mod.cuda.Event(enable_timing=True)
+            except RuntimeError:
+                # CPU-only torch builds define a dummy ``cuda.Event`` class
+                # that raises ``RuntimeError`` on instantiation.  Fall back
+                # to CPU timing silently.
+                self._backend = _BACKEND_CPU
         else:
             # CPU fallback — the event is simply a nanosecond timestamp.
             self._backend = _BACKEND_CPU

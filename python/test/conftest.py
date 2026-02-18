@@ -63,7 +63,10 @@ def fresh_knobs():
     Resets all knobs except ``build``, ``nvidia``, and ``amd`` (preserves
     library paths needed to compile kernels).
     """
-    from triton._internal_testing import _fresh_knobs_impl
+    try:
+        from triton._internal_testing import _fresh_knobs_impl
+    except (RuntimeError, ImportError):
+        pytest.skip("fresh_knobs requires an active GPU driver (_internal_testing unavailable)")
     fresh_function, reset_function = _fresh_knobs_impl(skipped_attr={"build", "nvidia", "amd"})
     try:
         yield fresh_function()
@@ -77,7 +80,10 @@ def fresh_knobs_including_libraries():
     Resets ALL knobs including ``build``, ``nvidia``, and ``amd``.
     Use for tests that verify initial values of these knobs.
     """
-    from triton._internal_testing import _fresh_knobs_impl
+    try:
+        from triton._internal_testing import _fresh_knobs_impl
+    except (RuntimeError, ImportError):
+        pytest.skip("fresh_knobs_including_libraries requires an active GPU driver (_internal_testing unavailable)")
     fresh_function, reset_function = _fresh_knobs_impl()
     try:
         yield fresh_function()
