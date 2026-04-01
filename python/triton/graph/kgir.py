@@ -34,7 +34,6 @@ dicts-of-dicts) to stay well within this budget.
 
 from __future__ import annotations
 
-import copy
 import logging
 import re
 from dataclasses import dataclass, field
@@ -50,8 +49,94 @@ from typing import (
 from .utils import topological_sort, detect_cycle
 from .errors import GraphCaptureError
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ValueIterableDict — dict subclass that iterates over values
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class ValueIterableDict(dict):
+    """A :class:`dict` subclass whose ``__iter__`` yields **values** instead of
+    keys.
+
+    All standard dict operations — ``__getitem__``, ``__setitem__``, ``get()``,
+    ``keys()``, ``values()``, ``items()``, ``update()``, ``__eq__``, and
+    ``__contains__`` — behave identically to a normal dict.  Only the default
+    iteration order is changed so that ``for x in d`` yields the same results
+    as ``for x in d.values()``.
+
+    This class is used by :class:`NodeMetadata` for ``tensor_shapes``,
+    ``tensor_strides``, and ``tensor_dtypes`` fields so that downstream code
+    can iterate the dict directly and receive shape tuples, stride tuples, or
+    dtype strings rather than integer argument-index keys.
+
+    Construction accepts:
+    - A regular dict: ``ValueIterableDict({0: (1024,), 1: (2048,)})``
+    - Another ValueIterableDict: safe re-wrapping via ``dict.items()``
+    - A list or tuple of values: auto-indexed ``{0: v0, 1: v1, ...}``
+    - ``None`` or empty: produces an empty ``ValueIterableDict``
+
+    Examples
+    --------
+    >>> d = ValueIterableDict({0: (1024,), 1: (2048, 512)})
+    >>> list(d)          # yields values
+    [(1024,), (2048, 512)]
+    >>> d[0]             # standard key access
+    (1024,)
+    >>> d == {0: (1024,), 1: (2048, 512)}  # equality with regular dict
+    True
+    >>> 0 in d           # membership tests keys
+    True
+    """
+
+    def __init__(self, data=None, **kwargs):  # noqa: D107
+        # Bypass the default dict(iterable) path which would use our
+        # overridden __iter__ on an existing ValueIterableDict, breaking
+        # reconstruction.  Instead always build from explicit items.
+        if data is None:
+            super().__init__(**kwargs)
+        elif isinstance(data, dict):
+            # Both dict and ValueIterableDict: copy via the C-level items()
+            # which is not affected by __iter__ override.
+            super().__init__(data.items(), **kwargs)
+        elif isinstance(data, (list, tuple)):
+            # Sequence of values → auto-assign positional integer keys.
+            super().__init__({i: v for i, v in enumerate(data)}, **kwargs)
+        else:
+            # Fallback: try standard construction (e.g. from pairs).
+            super().__init__(data, **kwargs)
+
+    def __iter__(self):
+        return iter(self.values())
+
+
+def _to_value_iterable_dict(data) -> "ValueIterableDict":
+    """Convert *data* to a :class:`ValueIterableDict`, handling all input
+    formats gracefully.
+
+    Accepted inputs:
+    - ``ValueIterableDict``: returned as-is (no double-wrapping).
+    - ``dict``: copied into a new ``ValueIterableDict``.
+    - ``list`` / ``tuple``: auto-indexed with positional integer keys
+      (e.g. ``[(1024,)] → {0: (1024,)}``).
+    - ``None`` or anything falsy: returns an empty ``ValueIterableDict``.
+    """
+    if isinstance(data, ValueIterableDict):
+        return data
+    if isinstance(data, dict):
+        return ValueIterableDict(data)
+    if isinstance(data, (list, tuple)):
+        return ValueIterableDict(data)
+    if data is None:
+        return ValueIterableDict()
+    # Final fallback — attempt construction; if it fails, return empty.
+    try:
+        return ValueIterableDict(data)
+    except (TypeError, ValueError):
+        return ValueIterableDict()
+
+
 if TYPE_CHECKING:
-    from triton.backends.compiler import GPUTarget
+    pass  # GPUTarget imported when needed for type annotations
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +314,22 @@ class NodeMetadata:
     runtime_performance_annotations: Dict[str, Dict[str, float]] = field(
         default_factory=dict
     )
+
+    def __post_init__(self) -> None:
+        """Normalize tensor metadata dicts to :class:`ValueIterableDict`.
+
+        Ensures that iterating over ``tensor_shapes``, ``tensor_strides``, and
+        ``tensor_dtypes`` yields **values** (shape tuples, stride tuples, dtype
+        strings) rather than integer argument-index keys.  All standard dict
+        operations (key access, ``.keys()``, ``.get()``, equality) are
+        preserved.
+
+        Accepts dict, list/tuple, None, or existing ValueIterableDict inputs.
+        List/tuple inputs are auto-indexed with positional integer keys.
+        """
+        self.tensor_shapes = _to_value_iterable_dict(self.tensor_shapes)
+        self.tensor_strides = _to_value_iterable_dict(self.tensor_strides)
+        self.tensor_dtypes = _to_value_iterable_dict(self.tensor_dtypes)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

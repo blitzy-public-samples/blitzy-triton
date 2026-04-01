@@ -65,8 +65,7 @@ from .config import DispatchConfig
 from .utils import topological_sort, compute_tensor_size_bytes
 from .errors import DispatchError, TransferError
 from triton.backends import backends
-from triton.backends.compiler import GPUTarget, BaseBackend
-from triton.backends.driver import GPUDriver
+from triton.backends.compiler import GPUTarget
 
 logger = logging.getLogger(__name__)
 
@@ -955,8 +954,9 @@ class DispatchDecisionEngine:
 
             # Phase 1 heuristic: rough model from resource usage + device specs.
             resources = node.get_resource_usage()
-            smem_bytes = resources.get("shared_memory_bytes", 0)
-            num_warps = resources.get("num_warps", 1)
+            # smem_bytes and num_warps extracted for future Phase 2 cost model refinement
+            _ = resources.get("shared_memory_bytes", 0)
+            _ = resources.get("num_warps", 1)
 
             meta = node.get_metadata()
             grid_dims = (
@@ -996,7 +996,8 @@ class DispatchDecisionEngine:
             if node is None:
                 continue
             resources = node.get_resource_usage()
-            num_warps = resources.get("num_warps", 1)
+            # Resource values extracted for future cost model refinement
+            _ = resources.get("num_warps", 1)
             smem_bytes = resources.get("shared_memory_bytes", 0)
 
             meta = node.get_metadata()
@@ -1102,11 +1103,11 @@ class DispatchDecisionEngine:
 
             # Sum tensor sizes for all tensors referenced by this node.
             # tensor_shapes is Dict[int, Tuple[int, ...]] and
-            # tensor_dtypes is Dict[int, str] — iterate by key to get values.
+            # tensor_dtypes is Dict[int, str] — iterate via .items() to
+            # safely handle ValueIterableDict whose __iter__ yields values.
             shapes = meta.tensor_shapes if meta.tensor_shapes else {}
             dtypes = meta.tensor_dtypes if meta.tensor_dtypes else {}
-            for arg_idx in shapes:
-                shape = shapes[arg_idx]
+            for arg_idx, shape in shapes.items():
                 dtype = dtypes.get(arg_idx)
                 if shape and dtype:
                     try:
@@ -1149,10 +1150,19 @@ class DispatchDecisionEngine:
                 if cand_load < best_load:
                     best_device = device
 
-        if best_device is None or best_device.gpu_target is None:
+        if best_device is None:
             raise DispatchError("No device could be selected for graph dispatch")
 
         target = best_device.gpu_target
+        if target is None:
+            # Synthesise a GPUTarget from the HardwareProfile when the
+            # profile was constructed without one (e.g. from mock data
+            # or JSON deserialisation).
+            target = GPUTarget(
+                backend=best_device.vendor,
+                arch=best_device.arch_generation,
+                warp_size=best_device.warp_size,
+            )
         order = graph.topological_sort()
         plan: Dict[int, GPUTarget] = {nid: target for nid in order}
 
@@ -1214,11 +1224,20 @@ class DispatchDecisionEngine:
                     if cand_load < best_load:
                         best_device = device
 
-            if best_device is None or best_device.gpu_target is None:
+            if best_device is None:
                 # Fallback: assign to first eligible device.
                 best_device = self._eligible_devices[0]
 
             target = best_device.gpu_target
+            if target is None:
+                # Synthesise a GPUTarget from the HardwareProfile when the
+                # profile was constructed without one (e.g. from mock data
+                # or JSON deserialisation).
+                target = GPUTarget(
+                    backend=best_device.vendor,
+                    arch=best_device.arch_generation,
+                    warp_size=best_device.warp_size,
+                )
             plan[nid] = target
             self._device_load[id(best_device)] = (
                 self._device_load.get(id(best_device), 0) + 1
@@ -1289,7 +1308,7 @@ class DispatchDecisionEngine:
                 return 1.0 / (1.0 + t) if t > 0 else 1.0
 
         resources = node.get_resource_usage()
-        num_warps = resources.get("num_warps", 1)
+        _ = resources  # Resource data reserved for Phase 2 cost model refinement
         meta = node.get_metadata()
         grid_dims = (
             meta.grid_dimensions
@@ -1311,7 +1330,6 @@ class DispatchDecisionEngine:
         """Resource efficiency for a single node on *device*."""
         resources = node.get_resource_usage()
         smem_bytes = resources.get("shared_memory_bytes", 0)
-        num_warps = resources.get("num_warps", 1)
 
         meta = node.get_metadata()
         grid_dims = (
@@ -1366,11 +1384,11 @@ class DispatchDecisionEngine:
 
         total_bytes = 0
         # tensor_shapes is Dict[int, Tuple[int, ...]] and
-        # tensor_dtypes is Dict[int, str] — iterate by key to get values.
+        # tensor_dtypes is Dict[int, str] — iterate via .items() to
+        # safely handle ValueIterableDict whose __iter__ yields values.
         shapes = meta.tensor_shapes if meta.tensor_shapes else {}
         dtypes = meta.tensor_dtypes if meta.tensor_dtypes else {}
-        for arg_idx in shapes:
-            shape = shapes[arg_idx]
+        for arg_idx, shape in shapes.items():
             dtype = dtypes.get(arg_idx)
             if shape and dtype:
                 try:
@@ -1502,8 +1520,7 @@ class DispatchDecisionEngine:
 
         # Sum all output tensors as a conservative estimate.
         total = 0
-        for arg_idx in shapes:
-            shape = shapes[arg_idx]
+        for arg_idx, shape in shapes.items():
             dtype = dtypes.get(arg_idx)
             if shape and dtype:
                 try:

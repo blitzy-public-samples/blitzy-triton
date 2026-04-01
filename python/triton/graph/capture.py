@@ -283,6 +283,15 @@ class KernelGraphCapture:
         self._active: bool = False
 
     # ------------------------------------------------------------------
+    # Compatibility aliases
+    # ------------------------------------------------------------------
+
+    @property
+    def _launches(self) -> List[CapturedLaunch]:
+        """Alias for ``_captured_launches`` for backwards compatibility."""
+        return self._captured_launches
+
+    # ------------------------------------------------------------------
     # Context-manager protocol
     # ------------------------------------------------------------------
 
@@ -761,8 +770,7 @@ class KernelGraphCapture:
             If a critical, unrecoverable error occurs during graph
             construction (e.g. cyclic dependency detected).
         """
-        from triton.graph.kgir import KGIRGraph, KGIREdge, KGIRNode, HardwareProfile, NodeMetadata
-        from triton.graph.errors import GraphCaptureError
+        from triton.graph.kgir import KGIRGraph
 
         t0 = time.monotonic()
 
@@ -841,18 +849,18 @@ class KernelGraphCapture:
         """
         from triton.graph.kgir import NodeMetadata
 
-        shapes: Dict[str, Tuple[int, ...]] = {}
-        strides_map: Dict[str, Tuple[int, ...]] = {}
-        dtypes: Dict[str, str] = {}
+        shapes: Dict[int, Tuple[int, ...]] = {}
+        strides_map: Dict[int, Tuple[int, ...]] = {}
+        dtypes: Dict[int, str] = {}
         access_patterns: Dict[str, str] = {}
 
         for t in launch.tensor_args:
-            key = f"arg{t.arg_index}"
-            shapes[key] = t.shape
-            strides_map[key] = t.strides
-            dtypes[key] = t.dtype
+            idx = t.arg_index
+            shapes[idx] = t.shape
+            strides_map[idx] = t.strides
+            dtypes[idx] = t.dtype
             # Conservative: assume every pointer is both read and written.
-            access_patterns[key] = "read_write"
+            access_patterns[f"arg{idx}"] = "read_write"
 
         # Grid dimensions — pad to 3D, clip to 3D.
         if isinstance(launch.grid, tuple):

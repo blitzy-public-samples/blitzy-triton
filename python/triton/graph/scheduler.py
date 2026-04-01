@@ -118,11 +118,10 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from .kgir import KGIRGraph, KGIRNode, KGIREdge, HardwareProfile
+from .kgir import KGIRGraph, KGIRNode, KGIREdge
 from .config import GraphConfig
 from .utils import (
     topological_sort,
-    compute_critical_path,
     compute_critical_path_remaining,
     detect_cycle,
     are_independent,
@@ -611,7 +610,6 @@ class KernelScheduler:
         topo = self._iter_node_ids()
         schedule: List[ScheduleEntry] = []
         for nid in topo:
-            node = self._graph.get_node(nid)
             preds = self._reverse_adjacency.get(nid, [])
             entry = ScheduleEntry(
                 kernel_id=nid,

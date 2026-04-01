@@ -26,8 +26,9 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import (
+    Any,
     Dict,
     List,
     Optional,
@@ -37,14 +38,11 @@ from typing import (
 
 from .kgir import (
     KGIRGraph,
-    KGIRNode,
-    KGIREdge,
     HardwareProfile,
     NodeMetadata,
 )
 from .config import GraphConfig
-from .utils import topological_sort, compute_tensor_size_bytes
-from .errors import TransferError
+from .utils import compute_tensor_size_bytes
 
 if TYPE_CHECKING:
     from triton.backends.compiler import GPUTarget
@@ -381,7 +379,8 @@ class MemoryPlanner:
         """
         graph = self._graph
         intermediates = self.identify_intermediates()
-        liveness = self.compute_liveness()
+        # Trigger liveness computation for side-effect caching
+        self.compute_liveness()
         edges = graph.get_edges()
 
         # Build a mapping: tensor_id -> (producer_node_ids, consumer_node_ids)
@@ -490,7 +489,6 @@ class MemoryPlanner:
             ``True`` if within budget, ``False`` if over-committed.
         """
         graph = self._graph
-        edges = graph.get_edges()
 
         # Compute per-fused-group SMEM requirements.
         # Group promotions by the set of nodes that produce/consume them.

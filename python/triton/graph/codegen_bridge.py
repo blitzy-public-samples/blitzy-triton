@@ -40,7 +40,7 @@ from triton.graph.cache import GraphCacheManager
 from triton.backends.compiler import GPUTarget
 
 if TYPE_CHECKING:
-    from triton.compiler.compiler import CompiledKernel
+    pass  # CompiledKernel imported when needed for type annotations
 
 logger = logging.getLogger(__name__)
 
@@ -897,7 +897,7 @@ class CodeGenerationBridge:
         Returns:
             ``CompiledKernel`` result.
         """
-        from triton.compiler.compiler import compile as triton_compile, IRSource
+        from triton.compiler.compiler import compile as triton_compile
 
         # Preferred: explicit IRSource construction (schema requirement)
         ir_source = self._create_ir_source(tmp_path, target)
@@ -1020,10 +1020,10 @@ class CodeGenerationBridge:
             f'module attributes {{"ttg.num-warps" = {num_warps} : i32, '
             f'"ttg.threads-per-warp" = {warp_size_val} : i32}} {{',
             f"  tt.func public @kernel_node_{node.node_id}({param_str}) "
-            f"attributes {{noinline = false}} {{",
-            f"    tt.return",
-            f"  }}",
-            f"}}",
+            "attributes {noinline = false} {",
+            "    tt.return",
+            "  }",
+            "}",
         ]
         return "\n".join(lines) + "\n"
 
@@ -1318,7 +1318,7 @@ class CodeGenerationBridge:
             f"  tt.func public @{module_name}({param_str}) "
             f"attributes {{noinline = false}} {{",
             f"    // SM/CU partitioning: {sms_per_sibling} SMs per sibling",
-            f"    %pid = tt.get_program_id {{axis = 0 : i32}} : i32",
+            "    %pid = tt.get_program_id {axis = 0 : i32} : i32",
         ]
         for i, sib_ttir in enumerate(sibling_ttirs):
             lo = i * sms_per_sibling
