@@ -424,18 +424,33 @@ class RuntimeProfiler:
     ) -> Dict[GPUTarget, Dict[int, Dict[str, float]]]:
         """Return metrics grouped by ``GPUTarget``.
 
+        Uses object identity (``id()``) as the internal grouping key so
+        that two physical GPUs of the same architecture (e.g. 2× A100)
+        whose ``GPUTarget`` fields are identical are not collapsed.  The
+        returned dict keys are the original ``GPUTarget`` *objects* from
+        each event entry, preserving identity for downstream consumers.
+
         Returns
         -------
         Dict[GPUTarget, Dict[int, Dict[str, float]]]
             ``{target: {kernel_id: metrics}}``
         """
-        result: Dict[GPUTarget, Dict[int, Dict[str, float]]] = {}
+        # Group by GPUTarget object identity to avoid collapsing
+        # same-generation devices.
+        id_to_target: Dict[int, GPUTarget] = {}
+        id_to_metrics: Dict[int, Dict[int, Dict[str, float]]] = {}
         for kernel_id, entry in self._events.items():
             tgt: GPUTarget = entry["target"]
-            per_target = result.setdefault(tgt, {})
+            tid = id(tgt)
+            id_to_target[tid] = tgt
+            per_target = id_to_metrics.setdefault(tid, {})
             metrics = self._metrics.get(kernel_id)
             if metrics is not None:
                 per_target[kernel_id] = metrics
+        # Reconstruct result dict keyed by the actual GPUTarget objects.
+        result: Dict[GPUTarget, Dict[int, Dict[str, float]]] = {}
+        for tid, tgt in id_to_target.items():
+            result[tgt] = id_to_metrics.get(tid, {})
         return result
 
     # ------------------------------------------------------------------

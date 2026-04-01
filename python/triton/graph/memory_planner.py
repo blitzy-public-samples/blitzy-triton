@@ -619,8 +619,11 @@ class MemoryPlanner:
         """
         graph = self._graph
         edges = graph.get_edges()
-        profiles = {
-            self._gpu_target_key(hp.gpu_target): hp
+        # Build a profile lookup keyed by GPUTarget object identity (id())
+        # so that two physical GPUs of the same architecture are not
+        # collapsed into a single entry.
+        profiles_by_id: Dict[int, Any] = {
+            id(hp.gpu_target): hp
             for hp in graph.hardware_profiles
             if hp.gpu_target is not None
         }
@@ -657,9 +660,9 @@ class MemoryPlanner:
             # Determine tensor size.
             tensor_size = self._estimate_tensor_size(edge.tensor_id, edge.source_id)
 
-            # Determine transfer type.
-            src_profile = profiles.get(self._gpu_target_key(src_target))
-            tgt_profile = profiles.get(self._gpu_target_key(tgt_target))
+            # Determine transfer type — look up by GPUTarget object identity.
+            src_profile = profiles_by_id.get(id(src_target))
+            tgt_profile = profiles_by_id.get(id(tgt_target))
 
             transfer_type = self._select_transfer_type(
                 src_target, tgt_target, src_profile, tgt_profile,
@@ -1192,8 +1195,13 @@ class MemoryPlanner:
 
     @staticmethod
     def _same_device(a: GPUTarget, b: GPUTarget) -> bool:
-        """Check if two ``GPUTarget`` instances refer to the same device."""
-        return a.backend == b.backend and a.arch == b.arch
+        """Check if two ``GPUTarget`` instances refer to the same physical device.
+
+        Uses object identity (``is``) to distinguish two physical GPUs of
+        the same architecture (e.g. 2× A100) whose ``backend`` and ``arch``
+        fields are identical but represent distinct hardware.
+        """
+        return a is b
 
     @staticmethod
     def _gpu_target_key(target: Optional[GPUTarget]) -> str:

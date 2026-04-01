@@ -44,6 +44,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _default_smem_for_target(target: GPUTarget) -> int:
+    """Derive a reasonable per-SM shared memory estimate from a ``GPUTarget``.
+
+    When no ``HardwareProfile`` is available, this function returns a
+    generation-aware estimate rather than the per-block 48 KiB limit which
+    would drastically under-estimate modern GPUs (A100 ≈ 164 KiB, H100 ≈ 228 KiB).
+    """
+    arch = target.arch
+    if isinstance(arch, int):
+        if arch >= 90:
+            return 228 * 1024  # Hopper-class (sm_9x)
+        if arch >= 80:
+            return 164 * 1024  # Ampere-class (sm_8x)
+        if arch >= 70:
+            return 96 * 1024   # Volta/Turing (sm_7x)
+    # Unknown or AMD — conservative but not the per-block minimum.
+    return 64 * 1024
+
+
 # ---------------------------------------------------------------------------
 # Performance constraint thresholds from AAP §0.7.2
 # ---------------------------------------------------------------------------
@@ -593,7 +613,10 @@ class CodeGenerationBridge:
 
         # 2. Python fallback — construct TTIR from kernel components
         hw = self._find_hardware_profile(target)
-        smem_budget = hw.smem_per_sm_bytes if hw else 49152
+        # Use the hardware profile's per-SM shared memory capacity when
+        # available; fall back to a generation-aware estimate rather than
+        # the per-block 48 KiB limit which under-estimates modern GPUs.
+        smem_budget = hw.smem_per_sm_bytes if hw else _default_smem_for_target(target)
         reg_budget = hw.registers_per_sm if hw else 65536
         warp_size_val = hw.warp_size if hw else target.warp_size
 
@@ -711,7 +734,9 @@ class CodeGenerationBridge:
 
         # 2. Python fallback
         hw = self._find_hardware_profile(target)
-        smem_budget = hw.smem_per_sm_bytes if hw else 49152
+        # Use the hardware profile's per-SM shared memory capacity when
+        # available; fall back to a generation-aware estimate.
+        smem_budget = hw.smem_per_sm_bytes if hw else _default_smem_for_target(target)
         reg_budget = hw.registers_per_sm if hw else 65536
         warp_size_val = hw.warp_size if hw else target.warp_size
         sm_count = hw.sm_count if hw else 108
@@ -1028,8 +1053,13 @@ class CodeGenerationBridge:
         Returns:
             Matching profile, or ``None``.
         """
+        # Priority 1: object identity — distinguishes two physical GPUs
+        # of the same architecture (e.g. 2× A100).
         for prof in self._graph.hardware_profiles:
-            # Direct gpu_target match
+            if prof.gpu_target is not None and prof.gpu_target is target:
+                return prof
+        # Priority 2: field-value match (architecture-class lookup).
+        for prof in self._graph.hardware_profiles:
             gt = prof.gpu_target
             if gt is not None:
                 if (
@@ -1038,7 +1068,8 @@ class CodeGenerationBridge:
                     and gt.arch == target.arch
                 ):
                     return prof
-            # Fallback: arch_generation substring match
+        # Priority 3: arch_generation substring match.
+        for prof in self._graph.hardware_profiles:
             if str(target.arch) in str(prof.arch_generation):
                 return prof
         return None

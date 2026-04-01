@@ -341,10 +341,13 @@ class KernelScheduler:
         # Simple heuristic: larger grids and higher resource usage → longer
         # execution.  This is intentionally conservative; the feedback
         # controller will refine it with measured data.
+        # Use 164 KiB as the SMEM normalizer (A100-class per-SM capacity)
+        # instead of 48 KiB (per-block limit) to avoid over-weighting
+        # SMEM usage in the duration estimate on modern GPUs.
         heuristic_ms = max(
             _DEFAULT_ESTIMATED_DURATION_MS,
             (grid_volume / 1024.0) * (num_warps / 4.0) * 0.01
-            + (smem_bytes / (48 * 1024)) * 0.05,
+            + (smem_bytes / (164 * 1024)) * 0.05,
         )
         return heuristic_ms * fused_multiplier
 
@@ -1228,6 +1231,10 @@ class KernelScheduler:
 def _device_key(device: Optional[GPUTarget]) -> str:
     """Return a hashable string key for a device target.
 
+    Uses object ``id()`` to distinguish two physical GPUs of the same
+    architecture (e.g. 2× A100) that share identical ``backend`` and
+    ``arch`` fields but represent distinct hardware.
+
     Parameters
     ----------
     device : Optional[GPUTarget]
@@ -1236,8 +1243,8 @@ def _device_key(device: Optional[GPUTarget]) -> str:
     Returns
     -------
     str
-        A key like ``"cuda:90"`` or ``"__none__"``.
+        A key like ``"cuda:90@140234567890"`` or ``"__none__"``.
     """
     if device is None:
         return "__none__"
-    return f"{device.backend}:{device.arch}"
+    return f"{device.backend}:{device.arch}@{id(device)}"

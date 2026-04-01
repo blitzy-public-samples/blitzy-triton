@@ -127,7 +127,7 @@ _HOST_STAGING_BANDWIDTH_GBPS: float = 12.0
 
 # Default device properties used when runtime queries are unavailable.
 _DEFAULT_SM_COUNT: int = 80
-_DEFAULT_SMEM_PER_SM: int = 48 * 1024  # 48 KiB
+_DEFAULT_SMEM_PER_SM: int = 164 * 1024  # 164 KiB (A100-class default, not per-block 48 KiB)
 _DEFAULT_REGISTERS_PER_SM: int = 65536
 _DEFAULT_GLOBAL_MEMORY: int = 16 * (1024 ** 3)  # 16 GiB
 _DEFAULT_MEMORY_BW_GBPS: float = 900.0
@@ -138,6 +138,58 @@ _DEFAULT_MAX_STREAMS: int = 128
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# Known per-SM shared memory capacities (bytes) indexed by NVIDIA compute
+# capability (major, minor).  Used as a fallback when PyTorch does not
+# expose ``max_shared_memory_per_multiprocessor``.
+_SMEM_PER_SM_BY_CC: Dict[Tuple[int, int], int] = {
+    (7, 0): 96 * 1024,     # V100
+    (7, 5): 64 * 1024,     # T4
+    (8, 0): 164 * 1024,    # A100
+    (8, 6): 100 * 1024,    # A40 / A10
+    (8, 9): 100 * 1024,    # L4 / L40
+    (9, 0): 228 * 1024,    # H100
+}
+
+
+def _smem_per_sm_from_cc(major: int, minor: int, props: Any) -> int:
+    """Derive per-SM shared memory from compute capability.
+
+    Priority:
+    1. Exact (major, minor) lookup in ``_SMEM_PER_SM_BY_CC``.
+    2. Major-only heuristic using ``max_shared_memory_per_block`` as
+       a lower bound and a generation-specific multiplier.
+    3. Conservative per-block value from ``props.max_shared_memory_per_block``
+       (this is always available in PyTorch).
+
+    The result is within 25 % of actual hardware specs for A100 (sm_80)
+    and H100 (sm_90) as required by the specification.
+    """
+    # 1. Exact lookup.
+    exact = _SMEM_PER_SM_BY_CC.get((major, minor))
+    if exact is not None:
+        return exact
+
+    # 2. Major-only heuristic.
+    per_block = getattr(props, "max_shared_memory_per_block", 48 * 1024)
+
+    # Generation-aware multipliers: per-SM capacity is typically a small
+    # integer multiple of the per-block configurable limit.
+    if major >= 9:
+        # Hopper-class (sm_9x): ~228 KiB/SM typical.
+        return max(per_block, 228 * 1024)
+    if major >= 8:
+        # Ampere / Ada Lovelace (sm_8x): ~164 KiB for sm_80, ~100 KiB for
+        # sm_86+.  Use per_block * 2 as a reasonable middle ground.
+        estimate = max(per_block * 2, 100 * 1024)
+        return min(estimate, 164 * 1024)
+    if major >= 7:
+        # Volta / Turing (sm_7x): 64–96 KiB.
+        return max(per_block, 64 * 1024)
+
+    # 3. Older or unknown arch: use per-block value as conservative fallback.
+    return per_block
+
 
 def _get_dispatch_knobs() -> Any:
     """Lazily import graph knobs to avoid circular dependency at import time.
@@ -235,12 +287,18 @@ class HardwareInventory:
 
     def __init__(self) -> None:
         self._devices: List[HardwareProfile] = []
-        self._device_by_target: Dict[str, HardwareProfile] = {}
+        # Maps GPUTarget object id → HardwareProfile for device-level lookup.
+        # Using id() instead of backend:arch string ensures that two physical
+        # GPUs of the same generation (e.g. 2× A100) remain distinct entries.
+        self._device_by_target_id: Dict[int, HardwareProfile] = {}
+        # Maps backend:arch → list of profiles for architecture-class lookup.
+        self._devices_by_arch: Dict[str, List[HardwareProfile]] = {}
         self._devices = self.enumerate_devices()
-        # Build fast lookup index by target key
         for dev in self._devices:
             if dev.gpu_target is not None:
-                self._device_by_target[_target_key(dev.gpu_target)] = dev
+                self._device_by_target_id[id(dev.gpu_target)] = dev
+                arch_key = _target_key(dev.gpu_target)
+                self._devices_by_arch.setdefault(arch_key, []).append(dev)
 
     # -- Public API ---------------------------------------------------------
 
@@ -315,13 +373,15 @@ class HardwareInventory:
         transfers are penalised to host-staging bandwidth because data must
         transit host memory.
         """
-        # Same physical device — no transfer needed.
+        # Same physical device — no transfer needed.  Use object identity
+        # (``is``) for the profile AND the GPUTarget to distinguish two
+        # physical GPUs of the same architecture (e.g. 2× A100).
         if source is target:
             return float("inf")
         if (
             source.gpu_target is not None
             and target.gpu_target is not None
-            and source.gpu_target == target.gpu_target
+            and source.gpu_target is target.gpu_target
         ):
             return float("inf")
 
@@ -437,9 +497,15 @@ class HardwareInventory:
                 arch_generation = f"sm_{arch}"
                 sm_count = props.multi_processor_count
                 global_memory = props.total_mem
-                # Shared memory per SM — not always in older torch builds.
+                # Shared memory per SM — PyTorch 2.4.0 does NOT expose
+                # max_shared_memory_per_multiprocessor.  Use a fallback
+                # chain that derives a reasonable per-SM estimate from the
+                # compute capability so that memory planning receives
+                # accurate capacity data for modern GPUs.
                 if hasattr(props, "max_shared_memory_per_multiprocessor"):
                     smem_per_sm = props.max_shared_memory_per_multiprocessor
+                else:
+                    smem_per_sm = _smem_per_sm_from_cc(major, minor, props)
         except (ImportError, RuntimeError, AttributeError):
             pass
 
@@ -671,9 +737,11 @@ class DispatchDecisionEngine:
             tgt_target = plan.get(edge.target_id)
 
             # Only process data-dependency edges that cross devices.
+            # Use ``is`` (object identity) to distinguish two physical GPUs
+            # of the same architecture that share identical field values.
             if src_target is None or tgt_target is None:
                 continue
-            if src_target == tgt_target:
+            if src_target is tgt_target:
                 continue
             if edge.edge_type != "data_dep":
                 continue
@@ -774,12 +842,22 @@ class DispatchDecisionEngine:
         compile_fn = self._resolve_compile_fn()
 
         results: Dict[GPUTarget, Any] = {}
+        # Per-target wall-clock measurements for overhead budget enforcement.
+        per_target_times: Dict[str, float] = {}
         start = time.perf_counter()
+
+        def _timed_compile(g: KGIRGraph, t: GPUTarget) -> Any:
+            """Wrapper that records per-target compilation wall-clock."""
+            t_start = time.perf_counter()
+            result = compile_fn(g, t)
+            elapsed = (time.perf_counter() - t_start) * 1000.0
+            per_target_times[_target_key(t) + f"@{id(t)}"] = elapsed
+            return result
 
         worker_count = min(len(targets), 8)
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             future_to_target = {
-                executor.submit(compile_fn, graph, t): t
+                executor.submit(_timed_compile, graph, t): t
                 for t in targets
             }
             for future in future_to_target:
@@ -792,10 +870,35 @@ class DispatchDecisionEngine:
                     )
                     results[target] = None
 
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        total_elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+        # AAP §0.7.2: wall-clock ≤ slowest single-target + 10 % overhead.
+        # Enforce as advisory warning (do not raise).
+        max_single_target_ms = (
+            max(per_target_times.values()) if per_target_times else 0.0
+        )
+        if max_single_target_ms > 0.0:
+            overhead_ratio = total_elapsed_ms / max_single_target_ms
+            if overhead_ratio > 1.1:
+                logger.warning(
+                    "Multi-target compilation overhead %.1f%% exceeds 10%% "
+                    "budget (total=%.1f ms, slowest_single=%.1f ms, "
+                    "per_target_times=%s)",
+                    (overhead_ratio - 1.0) * 100.0,
+                    total_elapsed_ms,
+                    max_single_target_ms,
+                    {k: f"{v:.1f}ms" for k, v in per_target_times.items()},
+                )
+
+        # Store per-target timing data for downstream consumption.
+        self._last_compile_times = per_target_times
+        self._last_compile_total_ms = total_elapsed_ms
+
         logger.debug(
-            "Multi-target compilation for %d target(s) completed in %.1f ms",
-            len(targets), elapsed_ms,
+            "Multi-target compilation for %d target(s) completed in %.1f ms "
+            "(per-target: %s)",
+            len(targets), total_elapsed_ms,
+            {k: f"{v:.1f}ms" for k, v in per_target_times.items()},
         )
         return results
 
@@ -998,9 +1101,13 @@ class DispatchDecisionEngine:
                 continue
 
             # Sum tensor sizes for all tensors referenced by this node.
-            shapes = meta.tensor_shapes if meta.tensor_shapes else []
-            dtypes = meta.tensor_dtypes if meta.tensor_dtypes else []
-            for shape, dtype in zip(shapes, dtypes):
+            # tensor_shapes is Dict[int, Tuple[int, ...]] and
+            # tensor_dtypes is Dict[int, str] — iterate by key to get values.
+            shapes = meta.tensor_shapes if meta.tensor_shapes else {}
+            dtypes = meta.tensor_dtypes if meta.tensor_dtypes else {}
+            for arg_idx in shapes:
+                shape = shapes[arg_idx]
+                dtype = dtypes.get(arg_idx)
                 if shape and dtype:
                     try:
                         total_bytes += compute_tensor_size_bytes(
@@ -1035,6 +1142,12 @@ class DispatchDecisionEngine:
             if score > best_score:
                 best_score = score
                 best_device = device
+            elif score == best_score and best_device is not None:
+                # Tie-breaking: prefer the device with lower current load.
+                cand_load = self._device_load.get(id(device), 0)
+                best_load = self._device_load.get(id(best_device), 0)
+                if cand_load < best_load:
+                    best_device = device
 
         if best_device is None or best_device.gpu_target is None:
             raise DispatchError("No device could be selected for graph dispatch")
@@ -1092,6 +1205,14 @@ class DispatchDecisionEngine:
                 if score > best_score:
                     best_score = score
                     best_device = device
+                elif score == best_score and best_device is not None:
+                    # Tie-breaking: prefer the device with the lowest
+                    # current load to distribute nodes evenly across
+                    # same-generation devices with identical scores.
+                    cand_load = self._device_load.get(id(device), 0)
+                    best_load = self._device_load.get(id(best_device), 0)
+                    if cand_load < best_load:
+                        best_device = device
 
             if best_device is None or best_device.gpu_target is None:
                 # Fallback: assign to first eligible device.
@@ -1230,7 +1351,7 @@ class DispatchDecisionEngine:
         total = len(predecessors)
         for pred_id in predecessors:
             pred_target = current_plan.get(pred_id)
-            if pred_target is not None and pred_target == device.gpu_target:
+            if pred_target is not None and pred_target is device.gpu_target:
                 local += 1
 
         return local / max(total, 1)
@@ -1244,9 +1365,13 @@ class DispatchDecisionEngine:
             return 1.0
 
         total_bytes = 0
-        shapes = meta.tensor_shapes if meta.tensor_shapes else []
-        dtypes = meta.tensor_dtypes if meta.tensor_dtypes else []
-        for shape, dtype in zip(shapes, dtypes):
+        # tensor_shapes is Dict[int, Tuple[int, ...]] and
+        # tensor_dtypes is Dict[int, str] — iterate by key to get values.
+        shapes = meta.tensor_shapes if meta.tensor_shapes else {}
+        dtypes = meta.tensor_dtypes if meta.tensor_dtypes else {}
+        for arg_idx in shapes:
+            shape = shapes[arg_idx]
+            dtype = dtypes.get(arg_idx)
             if shape and dtype:
                 try:
                     total_bytes += compute_tensor_size_bytes(tuple(shape), dtype)
@@ -1320,16 +1445,25 @@ class DispatchDecisionEngine:
     def _profile_for_target(
         self, target: GPUTarget,
     ) -> Optional[HardwareProfile]:
-        """Look up the :class:`HardwareProfile` associated with *target*."""
-        key = _target_key(target)
-        prof = self._inventory._device_by_target.get(key)
+        """Look up the :class:`HardwareProfile` associated with *target*.
+
+        Uses object identity (``id()``) as the primary key to distinguish
+        two physical GPUs of the same architecture.  Falls back to a linear
+        scan using ``is`` for cases where the target was not registered
+        during inventory construction.
+        """
+        # Primary: O(1) lookup by GPUTarget object identity.
+        prof = self._inventory._device_by_target_id.get(id(target))
         if prof is not None:
             return prof
-        # Linear scan fallback.
+        # Linear scan fallback using object identity.
         for dev in self._inventory.devices:
-            if dev.gpu_target is not None and dev.gpu_target == target:
+            if dev.gpu_target is not None and dev.gpu_target is target:
                 return dev
-        return None
+        # Last resort: architecture-class match (first device of that arch).
+        arch_key = _target_key(target)
+        arch_devs = self._inventory._devices_by_arch.get(arch_key, [])
+        return arch_devs[0] if arch_devs else None
 
     @staticmethod
     def _estimate_transfer_bytes(
@@ -1352,22 +1486,25 @@ class DispatchDecisionEngine:
             return fallback
 
         tensor_id = edge.tensor_id
-        shapes = meta.tensor_shapes if meta.tensor_shapes else []
-        dtypes = meta.tensor_dtypes if meta.tensor_dtypes else []
+        # tensor_shapes is Dict[int, Tuple[int, ...]] and
+        # tensor_dtypes is Dict[int, str] — use dict key access, not positional.
+        shapes = meta.tensor_shapes if meta.tensor_shapes else {}
+        dtypes = meta.tensor_dtypes if meta.tensor_dtypes else {}
 
         if tensor_id is not None and isinstance(tensor_id, int):
-            if 0 <= tensor_id < len(shapes) and tensor_id < len(dtypes):
-                shape = shapes[tensor_id]
-                dtype = dtypes[tensor_id]
-                if shape and dtype:
-                    try:
-                        return compute_tensor_size_bytes(tuple(shape), dtype)
-                    except (TypeError, ValueError):
-                        pass
+            shape = shapes.get(tensor_id)
+            dtype = dtypes.get(tensor_id)
+            if shape and dtype:
+                try:
+                    return compute_tensor_size_bytes(tuple(shape), dtype)
+                except (TypeError, ValueError):
+                    pass
 
         # Sum all output tensors as a conservative estimate.
         total = 0
-        for shape, dtype in zip(shapes, dtypes):
+        for arg_idx in shapes:
+            shape = shapes[arg_idx]
+            dtype = dtypes.get(arg_idx)
             if shape and dtype:
                 try:
                     total += compute_tensor_size_bytes(tuple(shape), dtype)
