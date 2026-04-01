@@ -35,8 +35,8 @@ TRITON_SRC = "/root/triton"
 KGIR_ENV = {
     "TRITON_FUSION_THRESHOLD": "0.10",
     "TRITON_FEEDBACK_ENABLE": "1",
-    "TRITON_DISPATCH_MODE": "performance",
-    "TRITON_KGIR_DUMP": "1",
+    "TRITON_DISPATCH_MODE": "balanced",
+    "TRITON_KGIR_DUMP": "0",
     "PYTHONPATH": f"{TRITON_SRC}/python",
 }
 
