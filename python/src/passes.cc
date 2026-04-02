@@ -7,10 +7,12 @@
 #include "triton/Analysis/Membar.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonToTritonGPU/Passes.h"
+#include "triton/Conversion/KGIRToTTIR/Passes.h"
 #include "triton/Dialect/Gluon/Transforms/Passes.h"
 #include "triton/Dialect/Triton/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonInstrument/Transforms/Passes.h"
+#include "triton/Dialect/TritonKGIR/Transforms/Passes.h"
 #include "triton/Target/LLVMIR/Passes.h"
 #include "triton/Tools/PluginUtils.h"
 #include "triton/Tools/Sys/GetEnv.hpp"
@@ -152,6 +154,18 @@ void init_gluon_passes(py::module &&m) {
                      gluon::createGluonInferCoalescedEncodingsPass);
 }
 
+void init_kgir_passes(py::module &&m) {
+  using namespace mlir;
+  namespace kgir = mlir::triton::kgir;
+  ADD_PASS_WRAPPER_0("add_fusion_analysis",
+                     kgir::createTritonKGIRFusionAnalysis);
+  ADD_PASS_WRAPPER_0("add_memory_planning",
+                     kgir::createTritonKGIRMemoryPlanning);
+  ADD_PASS_WRAPPER_0("add_scheduler", kgir::createTritonKGIRScheduler);
+  ADD_PASS_WRAPPER_0("add_convert_kgir_to_ttir",
+                     mlir::triton::createConvertKGIRToTTIR);
+}
+
 void init_triton_passes(py::module &&m) {
   init_triton_analysis(m.def_submodule("analysis"));
   init_triton_passes_common(m.def_submodule("common"));
@@ -160,5 +174,6 @@ void init_triton_passes(py::module &&m) {
   init_triton_passes_ttgpuir(m.def_submodule("ttgpuir"));
   init_triton_passes_llvmir(m.def_submodule("llvmir"));
   init_gluon_passes(m.def_submodule("gluon"));
+  init_kgir_passes(m.def_submodule("kgir"));
   init_plugin_passes(m.def_submodule("plugin"));
 }
