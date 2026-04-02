@@ -33,7 +33,11 @@ from triton.graph import (
     TransferError,
 )
 from triton.graph.config import DispatchConfig, FeedbackConfig
-from triton.graph.dispatch import DispatchDecisionEngine, HardwareInventory
+from triton.graph.dispatch import (
+    DispatchDecisionEngine,
+    HardwareInventory,
+    _smem_per_sm_from_cc,
+)
 from triton.graph.kgir import HardwareProfile, KGIRGraph, NodeMetadata
 from triton.graph.profiler import RuntimeProfiler
 from triton.graph.feedback import FeedbackController
@@ -184,7 +188,11 @@ def _make_hardware_profile(device_index: int = 0) -> HardwareProfile:
             vendor="nvidia",
             arch_generation=f"sm_{props.major}{props.minor}",
             sm_count=props.multi_processor_count,
-            smem_per_sm_bytes=props.max_shared_memory_per_multiprocessor,
+            smem_per_sm_bytes=(
+                props.max_shared_memory_per_multiprocessor
+                if hasattr(props, "max_shared_memory_per_multiprocessor")
+                else _smem_per_sm_from_cc(props.major, props.minor, props)
+            ),
             registers_per_sm=65536,  # Standard for recent NVIDIA architectures
             global_memory_bytes=props.total_mem,
             memory_bandwidth_gbps=float(props.total_mem) / 1e9 * 8,  # estimate
