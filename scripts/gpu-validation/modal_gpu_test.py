@@ -75,6 +75,7 @@ triton_image = (
     )
     .run_commands(
         f"git clone --depth 1 --branch {BRANCH} {REPO_URL} {TRITON_SRC}",
+        force_build=True,
     )
     .run_commands(
         # ---------------------------------------------------------------
