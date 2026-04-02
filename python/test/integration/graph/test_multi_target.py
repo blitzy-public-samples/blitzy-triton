@@ -194,8 +194,8 @@ def _make_hardware_profile(device_index: int = 0) -> HardwareProfile:
                 else _smem_per_sm_from_cc(props.major, props.minor, props)
             ),
             registers_per_sm=65536,  # Standard for recent NVIDIA architectures
-            global_memory_bytes=props.total_mem,
-            memory_bandwidth_gbps=float(props.total_mem) / 1e9 * 8,  # estimate
+            global_memory_bytes=props.total_memory,
+            memory_bandwidth_gbps=float(props.total_memory) / 1e9 * 8,  # estimate
             compute_throughput_tflops=float(props.multi_processor_count) * 0.1,  # rough estimate
             warp_size=32,
             max_concurrent_streams=128,

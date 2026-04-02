@@ -495,7 +495,7 @@ class HardwareInventory:
                 arch = major * 10 + minor
                 arch_generation = f"sm_{arch}"
                 sm_count = props.multi_processor_count
-                global_memory = props.total_mem
+                global_memory = props.total_memory
                 # Shared memory per SM — PyTorch 2.4.0 does NOT expose
                 # max_shared_memory_per_multiprocessor.  Use a fallback
                 # chain that derives a reasonable per-SM estimate from the
